@@ -1,0 +1,213 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ShiniamiX – Anime Streaming</title>
+<link rel="manifest" href="manifest.json">
+
+<style>
+body { margin:0; font-family: Arial, sans-serif; background: #0a0a0a; color: white; transition: 0.5s; }
+body.light { background:#f4f4f4; color:#111; }
+header { background:#111; padding:20px; text-align:center; font-size:32px; color:#ee0000; position: sticky; top:0; }
+nav { display:flex; justify-content:center; gap:20px; background:#222; padding:10px; }
+nav a { color:white; text-decoration:none; font-weight:bold; }
+nav a:hover { color:#ff4444; transform: scale(1.1); }
+body.light nav { background:#ddd; }
+body.light nav a { color:#111; }
+.container { width:90%; margin:auto; padding:20px; }
+h2 { color:#ff4444; }
+.box { background:#1b1b1b; padding:15px; border-radius:15px; margin-bottom:25px; }
+body.light .box { background:#fff; color:#111; }
+button { padding:10px 20px; background:#ff4444; border:none; color:white; font-weight:bold; border-radius:6px; cursor:pointer; }
+button:hover { background:#cc0000; transform: scale(1.05); }
+input { width:100%; padding:10px; margin:8px 0; border-radius:6px; border:none; }
+img, video { width:100%; border-radius:10px; }
+.toggle-btn { position:fixed; bottom:20px; right:20px; background:#ff4444; padding:15px; border-radius:50%; cursor:pointer; color:white; font-size:18px; }
+.toggle-btn:hover { transform: scale(1.2); background:#cc0000; }
+.admin-panel { display:none; border:2px solid #ff4444; padding:15px; border-radius:12px; margin:15px 0; }
+.grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); gap:15px; }
+</style>
+
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
+import { getAuth, onAuthStateChanged, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, browserLocalPersistence, inMemoryPersistence, setPersistence } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js";
+import { getFirestore, collection, addDoc, getDocs, query, where, doc, setDoc, getDoc } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
+import { getStorage, ref, uploadBytes, getDownloadURL } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-storage.js";
+
+/* Firebase config */
+const firebaseConfig = { 
+  apiKey:"YOUR_API_KEY", 
+  authDomain:"shinigamix.firebaseapp.com", 
+  projectId:"shinigamix", 
+  storageBucket:"shinigamix.appspot.com", 
+  appId:"YOUR_APP_ID" 
+};
+
+const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const db = getFirestore(app);
+const storage = getStorage(app);
+
+let currentUser;
+let isAdmin = false;
+
+/* Dark/Light mode */
+function toggleMode(){ document.body.classList.toggle('light'); }
+
+/* LOGIN WITH REMEMBER ME */
+window.loginUser = async () => {
+  try {
+    const persistence = document.getElementById("rememberMe").checked ? browserLocalPersistence : inMemoryPersistence;
+    await setPersistence(auth, persistence);
+    await signInWithEmailAndPassword(auth, emailLogin.value, passwordLogin.value);
+  } catch (error) {
+    alert("Login failed: "+error.message);
+  }
+};
+
+/* SIGNUP */
+window.signupUser = async () => {
+  try {
+    const cred = await createUserWithEmailAndPassword(auth,emailSignup.value,passwordSignup.value);
+    await setDoc(doc(db,"users",cred.user.uid), {role:"user"});
+    alert("Sign up successful! You can now log in.");
+    showLoginForm();
+  } catch(e){ alert("Sign up failed: "+e.message); }
+};
+
+/* LOGOUT */
+window.logout = () => signOut(auth);
+
+/* SHOW/HIDE FORMS */
+function showLoginForm(){
+  loginForm.style.display="block";
+  signupForm.style.display="none";
+}
+function showSignupForm(){
+  loginForm.style.display="none";
+  signupForm.style.display="block";
+}
+
+/* AUTH STATE */
+onAuthStateChanged(auth, async user=>{
+  if(user){
+    currentUser = user;
+    loginBox.style.display="none";
+    appBox.style.display="block";
+    const snap = await getDoc(doc(db,"users",user.uid));
+    isAdmin = snap.exists() && snap.data().role === "admin";
+    adminPanel.style.display = isAdmin ? "block" : "none";
+    loadAnime();
+  } else {
+    loginBox.style.display="block";
+    appBox.style.display="none";
+  }
+});
+
+/* LOAD ANIME */
+async function loadAnime(){
+  animeList.innerHTML="";
+  const snap = await getDocs(collection(db,"anime"));
+  snap.forEach(d=>{
+    animeList.innerHTML+=`
+      <div class="card" onclick="loadEpisodes('${d.data().title}')">
+        <img src="${d.data().image}">
+        <h3>${d.data().title}</h3>
+      </div>`;
+  });
+}
+
+/* LOAD EPISODES */
+window.loadEpisodes = async anime=>{
+  episodeList.innerHTML="";
+  const q = query(collection(db,"episodes"), where("anime","==",anime));
+  const snap = await getDocs(q);
+  snap.forEach(d=>{
+    episodeList.innerHTML+=`
+      <div class="card">
+        <h4>${d.data().title}</h4>
+        <video controls src="${d.data().video}" ontimeupdate="saveProgress('${d.id}',this.currentTime)"></video>
+      </div>`;
+  });
+};
+
+/* SAVE WATCH HISTORY */
+window.saveProgress = async(ep,time)=>{
+  await setDoc(doc(db,"history",currentUser.uid+"_"+ep),{
+    user: currentUser.uid,
+    episode: ep,
+    time
+  });
+};
+
+/* ADMIN ADD ANIME */
+window.addAnime = async ()=>{
+  await addDoc(collection(db,"anime"), { title: animeTitle.value, image: animeImage.value });
+  animeTitle.value=""; animeImage.value=""; loadAnime();
+};
+
+/* ADMIN UPLOAD EPISODE */
+window.uploadEpisode = async ()=>{
+  const file = videoFile.files[0];
+  const storageRef = ref(storage,`videos/${file.name}`);
+  await uploadBytes(storageRef,file);
+  const url = await getDownloadURL(storageRef);
+  await addDoc(collection(db,"episodes"), { anime: epAnime.value, title: epTitle.value, video: url });
+  alert("Episode uploaded");
+};
+
+/* PWA */
+if("serviceWorker" in navigator){ navigator.serviceWorker.register("sw.js"); }
+
+</script>
+</head>
+
+<body>
+
+<div id="loginBox" class="box" style="max-width:400px;margin:80px auto;">
+  <h2>🔐 Welcome to ShiniamiX</h2>
+  <button onclick="showLoginForm()">Login</button>
+  <button onclick="showSignupForm()">Sign Up</button>
+
+  <div id="loginForm" style="display:none; margin-top:15px;">
+    <input id="emailLogin" placeholder="Email">
+    <input id="passwordLogin" type="password" placeholder="Password">
+    <label><input type="checkbox" id="rememberMe"> Remember Me</label>
+    <button onclick="loginUser()">Login</button>
+  </div>
+
+  <div id="signupForm" style="display:none; margin-top:15px;">
+    <input id="emailSignup" placeholder="Email">
+    <input id="passwordSignup" type="password" placeholder="Password">
+    <button onclick="signupUser()">Sign Up</button>
+  </div>
+</div>
+
+<div id="appBox" style="display:none;">
+<header>ShiniamiX <button onclick="logout()">Logout</button></header>
+
+<!-- ADMIN PANEL -->
+<div id="adminPanel" class="admin-panel">
+<h3>👨‍💼 Admin Panel</h3>
+<input id="animeTitle" placeholder="Anime Title">
+<input id="animeImage" placeholder="Cover Image URL">
+<button onclick="addAnime()">Add Anime</button>
+
+<h4>Add Episode</h4>
+<input id="epAnime" placeholder="Anime Title">
+<input id="epTitle" placeholder="Episode Title">
+<input type="file" id="videoFile">
+<button onclick="uploadEpisode()">Upload Episode</button>
+</div>
+
+<h2>🔥 Anime List</h2>
+<div id="animeList" class="grid"></div>
+
+<h2>📺 Episodes</h2>
+<div id="episodeList" class="grid"></div>
+</div>
+
+<div class="toggle-btn" onclick="toggleMode()">☀ / 🌙</div>
+</body>
+</html>
